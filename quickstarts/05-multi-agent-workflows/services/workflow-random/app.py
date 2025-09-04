@@ -2,12 +2,14 @@ from dapr_agents import RandomOrchestrator
 from dotenv import load_dotenv
 import asyncio
 import logging
+import os
+import time
 
 
 async def main():
     try:
         workflow_service = RandomOrchestrator(
-            name="RandomOrchestrator",
+            name=f"RandomOrchestrator-{int(time.time())}",
             message_bus_name="messagepubsub",
             state_store_name="workflowstatestore",
             state_key="workflow_state",
