@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import time
-import os
 from typing import Any, Callable, Dict, Optional, Tuple, Type, List
 
 from cloudevents.http.conversion import from_http
