@@ -118,12 +118,14 @@ class ServiceMixin:
                 loop = asyncio.get_event_loop()
                 add_signal_handlers_cross_platform(loop, self.handle_shutdown_signal)
                 self.register_message_routes()
+                self.start_runtime()
                 self._is_running = True
                 while not self._shutdown_event.is_set():
                     await asyncio.sleep(1)
             else:
                 logger.info("Running in FastAPI service mode.")
                 self.register_message_routes()
+                self.start_runtime()
                 self._is_running = True
                 await self._http_server.start()
         except asyncio.CancelledError:
