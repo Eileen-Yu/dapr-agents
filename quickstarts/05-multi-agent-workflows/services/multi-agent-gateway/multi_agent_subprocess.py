@@ -15,13 +15,25 @@ async def run_agent_subprocess(agent_id):
     """Run a single agent in a subprocess"""
     prefix = agent_id.upper()
     
+    # Debug: show what we're looking for
+    print(f"🔍 Looking for {agent_id} configuration...", flush=True)
+    print(f"   Checking env var: DAPR_GRPC_ENDPOINT_{prefix}", flush=True)
+    
     # Check if configuration exists
     grpc_endpoint = os.getenv(f"DAPR_GRPC_ENDPOINT_{prefix}")
     if not grpc_endpoint:
-        print(f"❌ No configuration for {agent_id}")
+        print(f"❌ No configuration for {agent_id}", flush=True)
+        print(f"   Available DAPR env vars:", flush=True)
+        for key in os.environ:
+            if "DAPR" in key:
+                value = os.environ[key]
+                if "TOKEN" in key:
+                    value = value[:20] + "..."
+                print(f"     {key} = {value}", flush=True)
         return None
     
-    print(f"🚀 Launching {agent_id} in subprocess...")
+    print(f"✅ Found configuration for {agent_id}", flush=True)
+    print(f"🚀 Launching {agent_id} in subprocess...", flush=True)
     
     # Create environment for subprocess
     env = os.environ.copy()
@@ -37,7 +49,18 @@ async def run_agent_subprocess(agent_id):
     agent_code = f'''
 import asyncio
 import logging
+import sys
 from dapr_agents import DurableAgent
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging to match standard dapr-agents output
+logging.basicConfig(level=logging.INFO)
+
+# Force unbuffered output
+sys.stdout.reconfigure(line_buffering=True)
 
 CONFIGS = {{
     "elfagent": {{
@@ -73,34 +96,46 @@ CONFIGS = {{
 }}
 
 async def main():
-    agent_id = "{agent_id}"
-    config = CONFIGS.get(agent_id)
-    
-    print(f"🏃 Starting {{config['name']}} ({{agent_id}})", flush=True)
-    
-    agent = DurableAgent(
-        name=config["name"],
-        role=config["role"],
-        goal=config["goal"],
-        instructions=config["instructions"],
-        message_bus_name="messagepubsub",
-        state_store_name="workflowstatestore",
-        state_key=f"workflow_state_{{config['name'].lower()}}",
-        agents_registry_store_name="agentstatestore",
-        agents_registry_key="agents_registry",
-        broadcast_topic_name="beacon_channel",
-    )
-    
-    print(f"✅ {{config['name']}} running", flush=True)
-    await agent.start()
+    try:
+        agent_id = "{agent_id}"
+        config = CONFIGS.get(agent_id)
+        
+        print(f"Starting {{config['name']}} ({{agent_id}})", flush=True)
+        
+        # Create standard DurableAgent - it will use its built-in TextPrinter
+        agent = DurableAgent(
+            name=config["name"],
+            role=config["role"],
+            goal=config["goal"],
+            instructions=config["instructions"],
+            message_bus_name="messagepubsub",
+            state_store_name="workflowstatestore",
+            state_key=f"workflow_state_{{config['name'].lower()}}",
+            agents_registry_store_name="agentstatestore",
+            agents_registry_key="agents_registry",
+            broadcast_topic_name="beacon_channel",
+        )
+        
+        print(f"{{config['name']}} ready", flush=True)
+        
+        # Start the agent - it will use its built-in TextPrinter for formatted output
+        await agent.start()
+        
+    except Exception as e:
+        print(f"Error starting agent: {{e}}", flush=True)
+        import traceback
+        traceback.print_exc()
 
-logging.basicConfig(level=logging.INFO)
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 '''
     
-    # Start subprocess
+    # Set environment for unbuffered output
+    env["PYTHONUNBUFFERED"] = "1"
+    
+    # Start subprocess with unbuffered Python output
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", agent_code,
+        sys.executable, "-u", "-c", agent_code,
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT
@@ -112,7 +147,7 @@ asyncio.run(main())
 async def monitor_subprocess(process, agent_id):
     """Monitor subprocess output"""
     async for line in process.stdout:
-        print(f"[{agent_id}] {line.decode().rstrip()}")
+        print(f"[{agent_id}] {line.decode().rstrip()}", flush=True)
     
     await process.wait()
     return process.returncode
@@ -137,19 +172,31 @@ async def main():
     # Launch all agents in subprocesses
     subprocesses = []
     for agent_name in agent_names:
-        result = await run_agent_subprocess(agent_name)
-        if result:
-            subprocesses.append(result)
+        try:
+            print(f"\n📦 Processing agent: {agent_name}", flush=True)
+            result = await run_agent_subprocess(agent_name)
+            if result:
+                subprocesses.append(result)
+                print(f"   ✅ Subprocess launched for {agent_name}", flush=True)
+            else:
+                print(f"   ❌ Failed to launch subprocess for {agent_name}", flush=True)
             # Brief pause between launches
             await asyncio.sleep(1)
+        except Exception as e:
+            print(f"   ❌ Exception launching {agent_name}: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
     
     if not subprocesses:
-        print("❌ No agents launched")
+        print("\n❌ ERROR: No agents were launched!", flush=True)
+        print("   Check the debug output above to see why.", flush=True)
         return
     
-    print(f"✅ Launched {len(subprocesses)} agent subprocesses")
-    print("📡 Each agent has its own environment and sidecar")
-    print("=" * 60)
+    print(f"\n✅ Successfully launched {len(subprocesses)} agent subprocesses:", flush=True)
+    for proc, agent_id in subprocesses:
+        print(f"   - {agent_id} (PID: {proc.pid})", flush=True)
+    print("\n📡 Agents should now respond to workflow messages", flush=True)
+    print("=" * 60, flush=True)
     
     # Monitor all subprocesses
     try:
