@@ -1,0 +1,27 @@
+# Multi-Agent Configuration Example
+# This runs multiple DurableAgents in a single Python process
+version: 1
+common:
+  resourcesPath: ./components
+  logLevel: info
+  appLogDestination: console
+
+# New agent syntax - runs all agents in one process
+agent:
+  name:
+    - ElfApp
+      # - HobbitApp  
+      # - WizardApp
+  appDirPath: ./services/multi-agent-gateway/
+  command: ["python3", "app.py"]
+
+# Optional: Additional standalone apps can still be defined
+apps:
+- appID: WorkflowApp
+  appDirPath: ./services/workflow-random/
+  command: ["python3", "app.py"]
+  appPort: 8004
+
+- appID: ClientApp
+  appDirPath: ./services/client/
+  command: ["python3", "http_client.py"]
