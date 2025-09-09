@@ -72,10 +72,28 @@ class WorkflowApp(BaseModel):
         """
         Initialize the Dapr workflow runtime and register tasks & workflows.
         """
-        # Initialize clients and runtime
-        self.wf_runtime = WorkflowRuntime()
+        # CRITICAL: Always use default WorkflowRuntime for actor stability
+        # The WorkflowRuntime MUST use consistent credentials to maintain actor instances
+        # Only DaprClient for state/pubsub operations should use agent-specific tokens
+        logger.info(f"WorkflowApp {getattr(self, 'name', 'Unknown')} initializing")
+        
+        # Always create WorkflowRuntime with default/global credentials
+        # This ensures the workflow actor instance remains stable
+        try:
+            self.wf_runtime = WorkflowRuntime()
+            logger.info(f"WorkflowApp - Created WorkflowRuntime: {self.wf_runtime}")
+        except Exception as e:
+            logger.error(f"WorkflowApp - Failed to create WorkflowRuntime: {e}")
+            raise RuntimeError(f"Failed to create WorkflowRuntime: {e}")
+        
+        try:
+            self.wf_client = DaprWorkflowClient()
+            logger.info(f"WorkflowApp - Created DaprWorkflowClient: {self.wf_client}")
+        except Exception as e:
+            logger.error(f"WorkflowApp - Failed to create DaprWorkflowClient: {e}")
+            raise RuntimeError(f"Failed to create DaprWorkflowClient: {e}")
+        
         self.wf_runtime_is_running = False
-        self.wf_client = DaprWorkflowClient()
         logger.info("WorkflowApp initialized; discovering tasks and workflows.")
 
         # Discover and register tasks and workflows
@@ -85,6 +103,7 @@ class WorkflowApp(BaseModel):
         self._register_workflows(discovered_wfs)
 
         super().model_post_init(__context)
+
 
     def _choose_llm_for(self, method: Callable) -> Optional[ChatClientBase]:
         """
@@ -438,6 +457,10 @@ class WorkflowApp(BaseModel):
 
     def start_runtime(self):
         """Idempotently start the Dapr workflow runtime."""
+        if not self.wf_runtime:
+            logger.error("Cannot start runtime - wf_runtime is None!")
+            raise RuntimeError("WorkflowRuntime was not initialized properly")
+        
         if not self.wf_runtime_is_running:
             logger.info("Starting workflow runtime.")
             self.wf_runtime.start()

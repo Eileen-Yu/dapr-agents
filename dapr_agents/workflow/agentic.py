@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, Optional, Tuple, Type, List
 
@@ -48,6 +49,8 @@ class AgenticWorkflow(
     """
 
     name: str = Field(..., description="The name of the agentic system.")
+    # Add dapr_client field to support custom DaprClient injection
+    dapr_client: Optional[Any] = Field(default=None, description="Optional custom DaprClient for multi-agent scenarios")
     message_bus_name: str = Field(
         ...,
         description="The name of the message bus component, defining the pub/sub base.",
@@ -126,12 +129,121 @@ class AgenticWorkflow(
         Raises:
             RuntimeError: If Dapr is not available in the current environment.
         """
-        self._dapr_client = DaprClient()
+        # Support optional dapr_client injection for multi-agent scenarios
+        logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - hasattr dapr_client: {hasattr(self, 'dapr_client')}")
+        if hasattr(self, 'dapr_client'):
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - dapr_client value: {self.dapr_client}")
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - dapr_client type: {type(self.dapr_client)}")
+        
+        # SIMPLE APPROACH: Use global environment variables (set during agent creation)
+        agent_token = os.environ.get('DAPR_API_TOKEN')
+        agent_endpoint = os.environ.get('DAPR_GRPC_ENDPOINT')
+        
+        logger.info(f"🔍 AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Checking global env vars:")
+        logger.info(f"   - DAPR_API_TOKEN: {'YES' if agent_token else 'NO'}")
+        logger.info(f"   - DAPR_GRPC_ENDPOINT: {'YES' if agent_endpoint else 'NO'}")
+        if agent_token:
+            logger.info(f"   - Token ending: ...{agent_token[-10:] if len(agent_token) > 10 else agent_token}")
+        
+        # Create DaprClient with agent-specific credentials or fallback to default
+        if agent_token and agent_endpoint:
+            logger.info(f"🔍 AgenticWorkflow {self.name} - Creating DaprClient with agent token: {agent_token[:20]}...{agent_token[-10:] if len(agent_token) > 30 else agent_token}")
+            logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint: {agent_endpoint}")
+            
+            from dapr.clients.grpc.client import DaprGrpcClient
+            from dapr.clients.grpc.interceptors import DaprClientInterceptor
+            
+            # DON'T strip https:// - let DaprGrpcClient handle it properly!
+            # The GrpcEndpoint class needs the https:// to know to use TLS
+            endpoint_address = agent_endpoint
+            logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint with protocol: {endpoint_address}")
+            
+            # Create DaprClient - DaprGrpcClient will auto-detect SSL from https:// prefix
+            interceptors = [DaprClientInterceptor([('dapr-api-token', agent_token)])]
+            self._dapr_client = DaprGrpcClient(address=endpoint_address, interceptors=interceptors)
+            
+            logger.info(f"✅ AgenticWorkflow {self.name} - Created DaprClient with UNIQUE agent token: {agent_token[-10:]}")
+        else:
+            # Fallback to injected custom client or default
+            if hasattr(self, 'dapr_client') and self.dapr_client:
+                logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using injected custom DaprClient")
+                self._dapr_client = self.dapr_client
+            else:
+                logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprClient")
+                self._dapr_client = DaprClient()
+        
         self._text_formatter = ColorTextFormatter()
-        self._state_store_client = DaprStateStore(store_name=self.state_store_name)
+        
+        # Create state store using the same agent credentials
+        if agent_token and agent_endpoint:
+            # CRITICAL: Use the agent-specific DaprClient we just created for state store operations
+            logger.info(f"AgenticWorkflow {self.name} - Creating agent-specific state store with agent token")
+            
+            # Create custom state store that uses our agent-specific DaprClient
+            from dapr_agents.storage.daprstores.base import DaprStoreBase
+            
+            class AgentSpecificStateStore(DaprStoreBase):
+                def __init__(self, store_name: str, agent_client, agent_name: str):
+                    super().__init__(store_name=store_name)
+                    self._agent_client = agent_client
+                    self._agent_name = agent_name
+                
+                def save_state(self, key: str, value, state_metadata=None):
+                    if state_metadata is None:
+                        state_metadata = {}
+                    logger.debug(f"AgentSpecificStateStore {self._agent_name} saving state: {key}")
+                    self._agent_client.save_state(
+                        store_name=self.store_name,
+                        key=key,
+                        value=value,
+                        state_metadata=state_metadata
+                    )
+                
+                def get_state(self, key: str, state_metadata=None):
+                    if state_metadata is None:
+                        state_metadata = {}
+                    logger.debug(f"AgentSpecificStateStore {self._agent_name} getting state: {key}")
+                    return self._agent_client.get_state(
+                        store_name=self.store_name,
+                        key=key,
+                        state_metadata=state_metadata
+                    )
+            
+            self._state_store_client = AgentSpecificStateStore(
+                store_name=self.state_store_name,
+                agent_client=self._dapr_client,  # Use the agent-specific DaprClient we just created
+                agent_name=self.name
+            )
+            logger.info(f"AgenticWorkflow {self.name} - Created agent-specific state store using agent-specific DaprClient")
+        else:
+            # Fallback to default state store
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprStateStore")
+            self._state_store_client = DaprStateStore(store_name=self.state_store_name)
+            
         logger.info(f"State store '{self.state_store_name}' initialized.")
-        self.initialize_state()
-        super().model_post_init(__context)
+        
+        # CRITICAL: Call parent's model_post_init() to initialize WorkflowRuntime
+        logger.info(f"AgenticWorkflow - NOW calling super().model_post_init")
+        try:
+            super().model_post_init(__context)
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - super().model_post_init completed")
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - After call: wf_runtime = {self.wf_runtime}")
+        except Exception as e:
+            logger.error(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - super().model_post_init failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
+        # Initialize state after WorkflowRuntime is set up
+        try:
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - About to initialize_state")
+            self.initialize_state()
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - initialize_state completed")
+        except Exception as e:
+            logger.error(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - initialize_state failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def get_chat_history(self, task: Optional[str] = None) -> List[Dict[str, Any]]:
         """

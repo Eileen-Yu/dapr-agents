@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
@@ -52,6 +53,11 @@ class DurableAgent(AgenticWorkflow, AgentBase):
         default=None,
         description="Metadata about the agent, including name, role, goal, instructions, and topic name.",
     )
+    # Explicitly define dapr_client to ensure it's passed through correctly
+    dapr_client: Optional[Any] = Field(
+        default=None,
+        description="Optional custom DaprClient for multi-agent scenarios"
+    )
 
     @model_validator(mode="before")
     def set_agent_and_topic_name(cls, values: dict):
@@ -62,6 +68,12 @@ class DurableAgent(AgenticWorkflow, AgentBase):
         # Derive agent_topic_name from agent name
         if not values.get("agent_topic_name") and values.get("name"):
             values["agent_topic_name"] = values["name"]
+        
+        # Debug: Log dapr_client value
+        if "dapr_client" in values:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"DurableAgent validator - dapr_client in values: {values['dapr_client']}")
 
         return values
 
@@ -87,7 +99,12 @@ class DurableAgent(AgenticWorkflow, AgentBase):
             "orchestrator": False,
         }
 
-        self.register_agentic_system()
+        # Skip auto-registration if flag is set (for multi-agent single process mode)
+        if not os.environ.get('SKIP_AUTO_REGISTER'):
+            self.register_agentic_system()
+        else:
+            logger.info(f"⏭️  Skipping auto-registration for {self.name} (will register later)")
+        
         if not self.wf_runtime_is_running:
             self.start_runtime()
 
