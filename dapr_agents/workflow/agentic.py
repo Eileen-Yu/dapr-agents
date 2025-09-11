@@ -153,27 +153,33 @@ class AgenticWorkflow(
                 logger.info(f"   - Token ending: ...{agent_token[-10:] if len(agent_token) > 10 else agent_token}")
         
         # Create DaprClient with agent-specific credentials if not already set
-        if not hasattr(self, '_dapr_client'):
-            if agent_token and agent_endpoint:
-                logger.info(f"🔍 AgenticWorkflow {self.name} - Creating DaprClient with agent token: {agent_token[:20]}...{agent_token[-10:] if len(agent_token) > 30 else agent_token}")
-                logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint: {agent_endpoint}")
-                
-                from dapr.clients.grpc.client import DaprGrpcClient
-                from dapr.clients.grpc.interceptors import DaprClientInterceptor
-                
-                # DON'T strip https:// - let DaprGrpcClient handle it properly!
-                # The GrpcEndpoint class needs the https:// to know to use TLS
-                endpoint_address = agent_endpoint
-                logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint with protocol: {endpoint_address}")
-                
-                # Create DaprClient - DaprGrpcClient will auto-detect SSL from https:// prefix
-                interceptors = [DaprClientInterceptor([('dapr-api-token', agent_token)])]
-                self._dapr_client = DaprGrpcClient(address=endpoint_address, interceptors=interceptors)
-                
-                logger.info(f"✅ AgenticWorkflow {self.name} - Created DaprClient with UNIQUE agent token: {agent_token[-10:]}")
-            else:
-                # Fallback to default DaprClient
-                logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprClient")
+        logger.info(f"Checking _dapr_client: hasattr={hasattr(self, '_dapr_client')}, value={self._dapr_client}")
+        if self._dapr_client is None:
+            try:
+                if agent_token and agent_endpoint:
+                    logger.info(f"🔍 AgenticWorkflow {self.name} - Creating DaprClient with agent token: {agent_token[:20]}...{agent_token[-10:] if len(agent_token) > 30 else agent_token}")
+                    logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint: {agent_endpoint}")
+                    
+                    from dapr.clients.grpc.client import DaprGrpcClient
+                    from dapr.clients.grpc.interceptors import DaprClientInterceptor
+                    
+                    # DON'T strip https:// - let DaprGrpcClient handle it properly!
+                    # The GrpcEndpoint class needs the https:// to know to use TLS
+                    endpoint_address = agent_endpoint
+                    logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint with protocol: {endpoint_address}")
+                    
+                    # Create DaprClient - DaprGrpcClient will auto-detect SSL from https:// prefix
+                    interceptors = [DaprClientInterceptor([('dapr-api-token', agent_token)])]
+                    self._dapr_client = DaprGrpcClient(address=endpoint_address, interceptors=interceptors)
+                    
+                    logger.info(f"✅ AgenticWorkflow {self.name} - Created DaprClient with UNIQUE agent token: {agent_token[-10:]}")
+                else:
+                    # Fallback to default DaprClient
+                    logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprClient")
+                    self._dapr_client = DaprClient()
+            except Exception as e:
+                logger.error(f"Failed to create DaprClient: {e}", exc_info=True)
+                logger.info("Creating default DaprClient as fallback")
                 self._dapr_client = DaprClient()
         
         self._text_formatter = ColorTextFormatter()
