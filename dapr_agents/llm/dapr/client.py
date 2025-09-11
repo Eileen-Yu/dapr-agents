@@ -1,8 +1,7 @@
 from dapr_agents.types.llm import DaprInferenceClientConfig
 from dapr_agents.llm.base import LLMClientBase
 from dapr.clients import DaprClient
-from dapr.clients.grpc._request import ConversationInput
-from dapr.clients.grpc._response import ConversationResponse
+from dapr.clients.grpc.conversation import ConversationInput, ConversationResponseAlpha1 as ConversationResponse
 from typing import Dict, Any, List
 from pydantic import model_validator
 

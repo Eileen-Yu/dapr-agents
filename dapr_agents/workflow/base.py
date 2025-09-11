@@ -77,17 +77,43 @@ class WorkflowApp(BaseModel):
         # Only DaprClient for state/pubsub operations should use agent-specific tokens
         logger.info(f"WorkflowApp {getattr(self, 'name', 'Unknown')} initializing")
         
+        # Check if custom workflow runtime params are provided
+        wf_host = getattr(self, '_wf_host', None)
+        wf_port = getattr(self, '_wf_port', None) 
+        wf_token = getattr(self, '_wf_token', None)
+        
         # Always create WorkflowRuntime with default/global credentials
         # This ensures the workflow actor instance remains stable
         try:
-            self.wf_runtime = WorkflowRuntime()
+            if wf_host or wf_token:
+                # Special handling for full URLs (https://...)
+                # If host contains :// it's a full URL, pass only host (SDK will parse it)
+                if wf_host and '://' in wf_host:
+                    logger.info(f"WorkflowApp - Creating WorkflowRuntime with URL: {wf_host}, token={'***' if wf_token else None}")
+                    # For full URLs, don't pass port separately
+                    self.wf_runtime = WorkflowRuntime(host=wf_host, port=None, api_token=wf_token)
+                else:
+                    logger.info(f"WorkflowApp - Creating WorkflowRuntime with custom params: host={wf_host}, port={wf_port}, token={'***' if wf_token else None}")
+                    self.wf_runtime = WorkflowRuntime(host=wf_host, port=wf_port, api_token=wf_token)
+            else:
+                self.wf_runtime = WorkflowRuntime()
             logger.info(f"WorkflowApp - Created WorkflowRuntime: {self.wf_runtime}")
         except Exception as e:
             logger.error(f"WorkflowApp - Failed to create WorkflowRuntime: {e}")
             raise RuntimeError(f"Failed to create WorkflowRuntime: {e}")
         
         try:
-            self.wf_client = DaprWorkflowClient()
+            if wf_host or wf_token:
+                # Special handling for full URLs (https://...)
+                if wf_host and '://' in wf_host:
+                    logger.info(f"WorkflowApp - Creating DaprWorkflowClient with URL: {wf_host}, token={'***' if wf_token else None}")
+                    # For full URLs, don't pass port separately
+                    self.wf_client = DaprWorkflowClient(host=wf_host, port=None, api_token=wf_token)
+                else:
+                    logger.info(f"WorkflowApp - Creating DaprWorkflowClient with custom params: host={wf_host}, port={wf_port}, token={'***' if wf_token else None}")
+                    self.wf_client = DaprWorkflowClient(host=wf_host, port=wf_port, api_token=wf_token)
+            else:
+                self.wf_client = DaprWorkflowClient()
             logger.info(f"WorkflowApp - Created DaprWorkflowClient: {self.wf_client}")
         except Exception as e:
             logger.error(f"WorkflowApp - Failed to create DaprWorkflowClient: {e}")

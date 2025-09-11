@@ -1,0 +1,28 @@
+# True Single Process Multi-Agent Configuration
+# Runs all agents in one Python process with separate DaprClients
+version: 1
+common:
+  resourcesPath: ./components
+  logLevel: info
+  appLogDestination: console
+
+# Single process with multiple agents
+agent:
+  names:
+    - ElfAgent
+    - HobbitAgent  
+    - WizardAgent
+  appDirPath: ./services/multi-agent-gateway/
+  command: ["python3", "multi_agent_single_process.py"]
+
+# Workflow orchestrator
+apps:
+- appID: WorkflowApp
+  appDirPath: ./services/workflow-random/
+  command: ["python3", "app.py"]
+  appPort: 8004
+
+# Client to trigger workflows
+- appID: ClientApp
+  appDirPath: ./services/client/
+  command: ["python3", "http_client.py"]

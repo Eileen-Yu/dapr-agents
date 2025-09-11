@@ -135,49 +135,54 @@ class AgenticWorkflow(
             logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - dapr_client value: {self.dapr_client}")
             logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - dapr_client type: {type(self.dapr_client)}")
         
-        # SIMPLE APPROACH: Use global environment variables (set during agent creation)
-        agent_token = os.environ.get('DAPR_API_TOKEN')
-        agent_endpoint = os.environ.get('DAPR_GRPC_ENDPOINT')
-        
-        logger.info(f"🔍 AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Checking global env vars:")
-        logger.info(f"   - DAPR_API_TOKEN: {'YES' if agent_token else 'NO'}")
-        logger.info(f"   - DAPR_GRPC_ENDPOINT: {'YES' if agent_endpoint else 'NO'}")
-        if agent_token:
-            logger.info(f"   - Token ending: ...{agent_token[-10:] if len(agent_token) > 10 else agent_token}")
-        
-        # Create DaprClient with agent-specific credentials or fallback to default
-        if agent_token and agent_endpoint:
-            logger.info(f"🔍 AgenticWorkflow {self.name} - Creating DaprClient with agent token: {agent_token[:20]}...{agent_token[-10:] if len(agent_token) > 30 else agent_token}")
-            logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint: {agent_endpoint}")
-            
-            from dapr.clients.grpc.client import DaprGrpcClient
-            from dapr.clients.grpc.interceptors import DaprClientInterceptor
-            
-            # DON'T strip https:// - let DaprGrpcClient handle it properly!
-            # The GrpcEndpoint class needs the https:// to know to use TLS
-            endpoint_address = agent_endpoint
-            logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint with protocol: {endpoint_address}")
-            
-            # Create DaprClient - DaprGrpcClient will auto-detect SSL from https:// prefix
-            interceptors = [DaprClientInterceptor([('dapr-api-token', agent_token)])]
-            self._dapr_client = DaprGrpcClient(address=endpoint_address, interceptors=interceptors)
-            
-            logger.info(f"✅ AgenticWorkflow {self.name} - Created DaprClient with UNIQUE agent token: {agent_token[-10:]}")
+        # Check if a dapr_client was injected (preferred for multi-agent scenarios)
+        if hasattr(self, 'dapr_client') and self.dapr_client:
+            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using injected DaprClient")
+            self._dapr_client = self.dapr_client
+            agent_token = None  # Mark that we're using injected client
+            agent_endpoint = None
         else:
-            # Fallback to injected custom client or default
-            if hasattr(self, 'dapr_client') and self.dapr_client:
-                logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using injected custom DaprClient")
-                self._dapr_client = self.dapr_client
+            # Fallback: Use global environment variables (set during agent creation)
+            agent_token = os.environ.get('DAPR_API_TOKEN')
+            agent_endpoint = os.environ.get('DAPR_GRPC_ENDPOINT')
+            
+            logger.info(f"🔍 AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Checking global env vars:")
+            logger.info(f"   - DAPR_API_TOKEN: {'YES' if agent_token else 'NO'}")
+            logger.info(f"   - DAPR_GRPC_ENDPOINT: {'YES' if agent_endpoint else 'NO'}")
+            if agent_token:
+                logger.info(f"   - Token ending: ...{agent_token[-10:] if len(agent_token) > 10 else agent_token}")
+        
+        # Create DaprClient with agent-specific credentials if not already set
+        if not hasattr(self, '_dapr_client'):
+            if agent_token and agent_endpoint:
+                logger.info(f"🔍 AgenticWorkflow {self.name} - Creating DaprClient with agent token: {agent_token[:20]}...{agent_token[-10:] if len(agent_token) > 30 else agent_token}")
+                logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint: {agent_endpoint}")
+                
+                from dapr.clients.grpc.client import DaprGrpcClient
+                from dapr.clients.grpc.interceptors import DaprClientInterceptor
+                
+                # DON'T strip https:// - let DaprGrpcClient handle it properly!
+                # The GrpcEndpoint class needs the https:// to know to use TLS
+                endpoint_address = agent_endpoint
+                logger.info(f"🔍 AgenticWorkflow {self.name} - Using endpoint with protocol: {endpoint_address}")
+                
+                # Create DaprClient - DaprGrpcClient will auto-detect SSL from https:// prefix
+                interceptors = [DaprClientInterceptor([('dapr-api-token', agent_token)])]
+                self._dapr_client = DaprGrpcClient(address=endpoint_address, interceptors=interceptors)
+                
+                logger.info(f"✅ AgenticWorkflow {self.name} - Created DaprClient with UNIQUE agent token: {agent_token[-10:]}")
             else:
+                # Fallback to default DaprClient
                 logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprClient")
                 self._dapr_client = DaprClient()
         
         self._text_formatter = ColorTextFormatter()
         
-        # Create state store using the same agent credentials
-        if agent_token and agent_endpoint:
-            # CRITICAL: Use the agent-specific DaprClient we just created for state store operations
-            logger.info(f"AgenticWorkflow {self.name} - Creating agent-specific state store with agent token")
+        # Create state store that reuses the agent's DaprClient
+        # This ensures all state operations use the same client with consistent credentials
+        if hasattr(self, '_dapr_client') and self._dapr_client:
+            # CRITICAL: Use the agent-specific DaprClient for all state store operations
+            logger.info(f"AgenticWorkflow {self.name} - Creating agent-specific state store that reuses DaprClient")
             
             # Create custom state store that uses our agent-specific DaprClient
             from dapr_agents.storage.daprstores.base import DaprStoreBase
@@ -211,13 +216,13 @@ class AgenticWorkflow(
             
             self._state_store_client = AgentSpecificStateStore(
                 store_name=self.state_store_name,
-                agent_client=self._dapr_client,  # Use the agent-specific DaprClient we just created
+                agent_client=self._dapr_client,  # Reuse the same DaprClient
                 agent_name=self.name
             )
-            logger.info(f"AgenticWorkflow {self.name} - Created agent-specific state store using agent-specific DaprClient")
+            logger.info(f"AgenticWorkflow {self.name} - State store will reuse the same DaprClient instance")
         else:
-            # Fallback to default state store
-            logger.info(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - Using default DaprStateStore")
+            # This shouldn't happen if we properly inject the client
+            logger.warning(f"AgenticWorkflow {getattr(self, 'name', 'Unknown')} - No DaprClient available, using default DaprStateStore")
             self._state_store_client = DaprStateStore(store_name=self.state_store_name)
             
         logger.info(f"State store '{self.state_store_name}' initialized.")

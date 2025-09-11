@@ -14,9 +14,9 @@ authors = [
     {name = "Dapr Authors", email = "dapr@dapr.io"}
 ]
 dependencies = [
-    "dapr>=1.15.0",
-    "dapr-ext-fastapi>=1.15.0",
-    "dapr-ext-workflow>=1.15.0",
+    "dapr-dev @ file:///Users/eileenyu/programming/python-sdk",
+    "dapr-ext-fastapi-dev @ file:///Users/eileenyu/programming/python-sdk/ext/dapr-ext-fastapi",
+    "dapr-ext-workflow-dev @ file:///Users/eileenyu/programming/python-sdk/ext/dapr-ext-workflow",
     "durabletask-dapr>=0.2.0a7",
     "pydantic>=2.11.3,<3.0.0",
     "jinja2>=3.1.0,<4.0.0",

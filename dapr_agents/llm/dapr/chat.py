@@ -14,8 +14,15 @@ from typing import (
     Union,
 )
 
-from dapr.clients.grpc._request import ConversationInput
+# from dapr.clients.grpc.conversation import ConversationInput  # Not available in current SDK
 from pydantic import BaseModel, Field
+
+# Define ConversationInput locally if not available in SDK
+class ConversationInput(BaseModel):
+    """Local definition of ConversationInput for compatibility"""
+    message: str
+    role: str = "user"
+    scrub_pii: bool = False
 
 from dapr_agents.llm.chat import ChatClientBase
 from dapr_agents.llm.dapr.client import DaprInferenceClientBase

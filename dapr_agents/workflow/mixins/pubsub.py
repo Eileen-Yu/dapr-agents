@@ -82,15 +82,28 @@ class PubSubMixin:
         try:
             json_message = await self.serialize_message(message)
 
-            # TODO: retry publish should be configurable
-            async with DaprClient() as client:
-                await client.publish_event(
+            # Use existing _dapr_client if available (for agent-specific credentials)
+            # Otherwise create a new one (backwards compatibility)
+            if hasattr(self, '_dapr_client') and self._dapr_client:
+                logger.debug(f"Using existing _dapr_client for publish")
+                await self._dapr_client.publish_event(
                     pubsub_name=pubsub_name or self.message_bus_name,
                     topic_name=topic_name,
                     data=json_message,
                     data_content_type="application/json",
                     publish_metadata=metadata or {},
                 )
+            else:
+                # Fallback to creating new client (backwards compatibility)
+                logger.debug(f"Creating new DaprClient for publish")
+                async with DaprClient() as client:
+                    await client.publish_event(
+                        pubsub_name=pubsub_name or self.message_bus_name,
+                        topic_name=topic_name,
+                        data=json_message,
+                        data_content_type="application/json",
+                        publish_metadata=metadata or {},
+                    )
 
             logger.debug(
                 f"Message successfully published to topic '{topic_name}' on pub/sub '{pubsub_name}'."
