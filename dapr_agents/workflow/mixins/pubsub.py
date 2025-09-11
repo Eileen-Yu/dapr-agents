@@ -86,7 +86,8 @@ class PubSubMixin:
             # Otherwise create a new one (backwards compatibility)
             if hasattr(self, '_dapr_client') and self._dapr_client:
                 logger.debug(f"Using existing _dapr_client for publish")
-                await self._dapr_client.publish_event(
+                # DaprGrpcClient.publish_event is synchronous, not async
+                self._dapr_client.publish_event(
                     pubsub_name=pubsub_name or self.message_bus_name,
                     topic_name=topic_name,
                     data=json_message,
@@ -96,8 +97,9 @@ class PubSubMixin:
             else:
                 # Fallback to creating new client (backwards compatibility)
                 logger.debug(f"Creating new DaprClient for publish")
-                async with DaprClient() as client:
-                    await client.publish_event(
+                # DaprClient.publish_event is also synchronous
+                with DaprClient() as client:
+                    client.publish_event(
                         pubsub_name=pubsub_name or self.message_bus_name,
                         topic_name=topic_name,
                         data=json_message,
