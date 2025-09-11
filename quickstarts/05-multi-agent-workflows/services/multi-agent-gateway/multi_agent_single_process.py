@@ -187,6 +187,7 @@ class HardcodedCredentialsAgent:
             goal=self.config["goal"],
             instructions=self.config["instructions"],
             message_bus_name="messagepubsub",
+            broadcast_topic_name="beacon_channel", 
             state_store_name="workflowstatestore",
             state_key=f"workflow_state_{self.agent_name}",
             agents_registry_store_name="agentstatestore",
