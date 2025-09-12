@@ -1,7 +1,12 @@
 from dapr_agents.types.llm import DaprInferenceClientConfig
 from dapr_agents.llm.base import LLMClientBase
 from dapr.clients import DaprClient
-from dapr.clients.grpc.conversation import ConversationInput, ConversationResponseAlpha1 as ConversationResponse
+try:
+    from dapr.clients.grpc.conversation import ConversationInput, ConversationResponseAlpha1 as ConversationResponse
+except ImportError:
+    # Fallback for older SDK versions or when conversation API is not available
+    ConversationInput = None
+    ConversationResponse = None
 from typing import Dict, Any, List
 from pydantic import model_validator
 

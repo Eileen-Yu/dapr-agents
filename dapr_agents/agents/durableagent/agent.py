@@ -1,8 +1,8 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from datetime import datetime, timezone, timedelta
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from dapr.ext.workflow import DaprWorkflowContext  # type: ignore
 from pydantic import Field, model_validator
@@ -53,6 +53,10 @@ class DurableAgent(AgenticWorkflow, AgentBase):
         default=None,
         description="Metadata about the agent, including name, role, goal, instructions, and topic name.",
     )
+    workflow_name_suffix: Optional[str] = Field(
+        default=None,
+        description="Optional suffix to append to the workflow name for uniqueness in single-process mode.",
+    )
     # Explicitly define dapr_client to ensure it's passed through correctly
     dapr_client: Optional[Any] = Field(
         default=None,
@@ -77,16 +81,91 @@ class DurableAgent(AgenticWorkflow, AgentBase):
 
         return values
 
+    def _discover_workflows(self) -> Dict[str, Callable]:
+        """Override to use dynamic workflow name if suffix is provided."""
+        from dapr_agents.workflow.utils.core import get_decorated_methods
+        import sys
+        import inspect
+        
+        module = sys.modules["__main__"]
+        wfs: Dict[str, Callable] = {}
+        
+        # Discover module-level workflows
+        for name, fn in inspect.getmembers(module, inspect.isfunction):
+            if getattr(fn, "_is_workflow", False) and fn.__module__ == module.__name__:
+                wfs[getattr(fn, "_workflow_name", name)] = fn
+        
+        # Discover method-level workflows with dynamic naming
+        for name, method in get_decorated_methods(self, "_is_workflow").items():
+            # Use our dynamic workflow name if this is the tool_calling_workflow
+            if name == "tool_calling_workflow" and hasattr(self, "_workflow_name"):
+                wfs[self._workflow_name] = method
+            else:
+                wfs[getattr(method, "_workflow_name", name)] = method
+        
+        logger.info(f"Discovered workflows with dynamic names: {list(wfs)}")
+        return wfs
+    
+    def _create_wrapped_method(self, method: Callable) -> Callable:
+        """
+        Override to use dynamic workflow name for tool_calling_workflow.
+        This ensures message routing uses the correct dynamic workflow name.
+        """
+        import functools
+        import inspect
+        import asyncio
+        from dapr_agents.workflow.utils.core import is_pydantic_model
+        
+        @functools.wraps(method)
+        async def wrapped_method(message: dict):
+            try:
+                if getattr(method, "_is_workflow", False):
+                    # Use dynamic workflow name for tool_calling_workflow
+                    if method.__name__ == "tool_calling_workflow" and hasattr(self, "_workflow_name"):
+                        workflow_name = self._workflow_name
+                    else:
+                        workflow_name = getattr(method, "_workflow_name", method.__name__)
+                    
+                    # If the message is a Pydantic model, extract metadata and convert to dict
+                    if is_pydantic_model(type(message)):
+                        # Extract metadata if available
+                        metadata = getattr(message, "_message_metadata", None)
+                        # Convert to dict for workflow input
+                        message_dict = message.model_dump()
+                        if metadata is not None:
+                            # Include metadata in the message dict
+                            message_dict["_message_metadata"] = metadata
+                        message = message_dict
+                    # Invoke the workflow with the correct dynamic name
+                    instance_id = self.run_workflow(workflow_name, input=message)
+                    asyncio.create_task(self.monitor_workflow_completion(instance_id))
+                    return None
+
+                if inspect.iscoroutinefunction(method):
+                    return await method(message=message)
+                else:
+                    return method(message=message)
+            except Exception as e:
+                logger.exception(f"Error in wrapped method '{method.__name__}': {e}")
+                raise
+
+        return wrapped_method
+
     def model_post_init(self, __context: Any) -> None:
         """Initializes the workflow with agentic execution capabilities."""
         self.state = DurableAgentWorkflowState().model_dump()
 
-        # Call AgenticWorkflow's model_post_init first to initialize state store and other dependencies
-        super().model_post_init(__context)
+        # Name of main Workflow - can be made unique with suffix for single-process mode
+        base_workflow_name = "ToolCallingWorkflow"
+        if self.workflow_name_suffix:
+            self._workflow_name = f"{base_workflow_name}_{self.workflow_name_suffix}"
+            # Store the dynamic workflow name for later use in message routing
+            # We'll override the wrapped method creation to use this
+        else:
+            self._workflow_name = base_workflow_name
 
-        # Name of main Workflow
-        # TODO: can this be configurable or dynamic? Would that make sense?
-        self._workflow_name = "ToolCallingWorkflow"
+        # Call AgenticWorkflow's model_post_init to initialize workflow runtime
+        super().model_post_init(__context)
 
         # Register the agentic system
         self._agent_metadata = {
@@ -372,6 +451,23 @@ class DurableAgent(AgenticWorkflow, AgentBase):
         user_message_copy: Optional[Dict[str, Any]] = (
             dict(user_message) if user_message else None
         )
+        
+        # DEBUG: Log what the agent is actually responding to
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🔍 {self.name} is generating response based on:")
+        logger.info(f"   Task provided: {task if task else 'None (using chat history)'}")
+        if messages:
+            # Show the last 3 messages for context
+            logger.info(f"   Last {min(3, len(messages))} messages in context:")
+            for msg in messages[-3:]:
+                role = msg.get('role', 'unknown')
+                name = msg.get('name', '')
+                content = str(msg.get('content', ''))[:150]  # First 150 chars
+                if len(str(msg.get('content', ''))) > 150:
+                    content += "..."
+                logger.info(f"      [{role}]{f' ({name})' if name else ''}: {content}")
+        logger.info(f"   Total messages in context: {len(messages)}")
+        logger.info(f"{'='*60}\n")
 
         if task and user_message_copy:
             # Add the new user message to memory only if input_data is provided and user message exists
@@ -467,7 +563,9 @@ class DurableAgent(AgenticWorkflow, AgentBase):
             message (Dict[str, Any]): A message to append to the workflow state and broadcast to all agents.
         """
         # Format message for broadcasting
-        message["role"] = "user"
+        # Agent broadcasts should have role="assistant" to prevent display confusion
+        # where other agents show the broadcast as coming from "user"
+        message["role"] = "assistant"
         message["name"] = self.name
         response_message = BroadcastMessage(**message)
 

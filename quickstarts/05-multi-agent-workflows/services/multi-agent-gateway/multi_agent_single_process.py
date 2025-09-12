@@ -186,6 +186,7 @@ class HardcodedCredentialsAgent:
             role=self.config["role"],
             goal=self.config["goal"],
             instructions=self.config["instructions"],
+            workflow_name_suffix=self.agent_name,  # Make workflow name unique per agent
             message_bus_name="messagepubsub",
             broadcast_topic_name="beacon_channel", 
             state_store_name="workflowstatestore",
